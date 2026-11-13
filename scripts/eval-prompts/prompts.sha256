@@ -1,0 +1,6 @@
+c295eab8cee79c49a19413763e51f7134b37f5dc18831c2c8a1a777dfd1a19bd  scripts/eval-prompts/dsl-syntax-0.1.0.md
+1996c6265bf131d83379c662c638a8033caba32ca08134d6f1cfae9973c993c3  scripts/eval-prompts/README.md
+2f05d1f38b41104d8d3aa1d9dac805517160d510cd249f80c1a606a2956613c0  scripts/eval-prompts/strategies/s0-bare.md
+012fd7291fc513f3d5d0769e3df7dc4a35ab7f90d03561b7fc014625208debf4  scripts/eval-prompts/strategies/s1-skeleton-fewshot.md
+b11567e47c7ffa942bf9ba03c7b7d13e0c54cb1e7b6dc8f2c6f65ded9cd6cad3  scripts/eval-prompts/strategies/s2-checklist.md
+b939421d1217ed5d23824f762a60882e8fe1d83a1af4ff505f9db011013d3346  scripts/eval-prompts/strategies/s3-excerpt.md

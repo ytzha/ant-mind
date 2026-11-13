@@ -36,6 +36,7 @@ jobs:
       - run: dotnet build tools/AntMind.Console/AntMind.Console.csproj -c Debug --no-restore
       - run: dotnet run --project tools/AntMind.Checks -c Debug --no-build
       - run: python scripts/check-model-eval.py
+      - run: python scripts/check-eval-harness.py
       - name: Build headless container
         run: docker build -t antmind-headless-ci .
       - name: Container architecture and real evaluation smoke

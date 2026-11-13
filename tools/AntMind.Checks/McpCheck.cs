@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using AntMind.Contracts;
 using AntMind.Transport;
@@ -6,7 +7,7 @@ internal static class McpCheck {
     public static async Task RunAsync() {
         var pipeName = "antmind-mcp-" + Guid.NewGuid().ToString("N");
         Process Start(string dll, params string[] arguments) {
-            var info = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            var info = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false) };
             info.ArgumentList.Add(Path.GetFullPath(dll));
             foreach (var argument in arguments) info.ArgumentList.Add(argument);
             info.Environment["ANTMIND_PIPE"] = pipeName;
@@ -132,6 +133,35 @@ internal static class McpCheck {
             Console.WriteLine("PASS real STDIO MCP upgrades hauler batch capacity");
             Console.WriteLine("PASS real STDIO MCP produces generic eggs and hatches selected species");
             Console.WriteLine("PASS real STDIO MCP initialize / observe / command / species program update → live host Tick 2");
+            // 中文分组名真实 STDIO 往返：必须让中文以未转义的 UTF-8 字节进 MCP stdin
+            // （模拟 scripts/game-agent.py 的 ensure_ascii=False），否则 \uXXXX 转义全是 ASCII、绕过编码验证。
+            // 成功时世界状态里的 Groups 应含完整中文名；不新增 Check 计数，保持 460 口径。
+            const string chineseName = "施工补给组-甲";
+            var relaxed = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+            async Task<JsonElement> RpcUtf8<T>(int id, T payload) {
+                await mcp.StandardInput.WriteLineAsync(JsonSerializer.Serialize(payload, relaxed));
+                while (true) {
+                    var line = await mcp.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15)) ?? throw new Exception("MCP exited.");
+                    var message = JsonDocument.Parse(line).RootElement.Clone();
+                    if (!message.TryGetProperty("id", out var responseId) || responseId.GetInt32() != id) continue;
+                    if (message.TryGetProperty("error", out _)) throw new Exception(message.ToString());
+                    return message.GetProperty("result");
+                }
+            }
+            var chineseBefore = (await new PipeClient(pipeName).SendAsync(new(Protocol.Version, "observe"))).Snapshot!;
+            var chineseResult = await RpcUtf8(46, new {
+                jsonrpc = "2.0", id = 46, method = "tools/call",
+                @params = new { name = "command", arguments = new {
+                    requestId = Guid.NewGuid().ToString(), expectedRevision = chineseBefore.Revision,
+                    kind = "CreateGroup", value = 0, reason = "MCP utf8 group name check",
+                    name = chineseName, task = "搬运补给" } }
+            });
+            if (chineseResult.TryGetProperty("isError", out var chineseError) && chineseError.GetBoolean())
+                throw new Exception(chineseResult.ToString());
+            var chineseView = (await new PipeClient(pipeName).SendAsync(new(Protocol.Version, "observe"))).Snapshot;
+            if (chineseView is null || !chineseView.Groups.Any(g => g.Name == chineseName))
+                throw new Exception("Chinese group name did not round-trip through real STDIO MCP.");
+            Console.WriteLine("PASS real STDIO MCP preserves a Chinese group name end to end (UTF-8, no BOM)");
         } finally {
             foreach (var process in new[] { mcp, host }) if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); }
         }

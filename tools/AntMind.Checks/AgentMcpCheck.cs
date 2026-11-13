@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using AntMind.Contracts;
 
@@ -8,7 +9,7 @@ internal static class AgentMcpCheck {
         var pipe="antmind-events-mcp-"+Guid.NewGuid().ToString("N");
         Process Start(string path,params string[] args) {
             var runtime=Path.GetFullPath(".tools/dotnet/dotnet.exe");
-            var info=new ProcessStartInfo(File.Exists(runtime)?runtime:"dotnet") {UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};
+            var info=new ProcessStartInfo(File.Exists(runtime)?runtime:"dotnet") {UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardInputEncoding=new UTF8Encoding(false),StandardOutputEncoding=new UTF8Encoding(false),StandardErrorEncoding=new UTF8Encoding(false)};
             info.ArgumentList.Add(Path.GetFullPath(path));foreach(var arg in args)info.ArgumentList.Add(arg);info.Environment["ANTMIND_PIPE"]=pipe;
             return Process.Start(info)??throw new Exception("Failed to start MCP test process");
         }
