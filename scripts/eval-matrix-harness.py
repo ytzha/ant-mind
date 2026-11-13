@@ -1,6 +1,6 @@
-# VERSION=0.1.1
+# VERSION=0.1.2
 # -*- coding: utf-8 -*-
-"""Ant Mind 同题对照矩阵 harness（纯标准库，不改 scripts/model-eval-bridge.py 0.2.0）。
+"""Ant Mind 同题对照矩阵 harness（纯标准库，不改 scripts/model-eval-bridge.py 0.2.1）。
 
 用法：
     python scripts/eval-matrix-harness.py --help
@@ -15,7 +15,7 @@
         --out .tmp-eval-harness/AB-SAMPLE-001-run1/reconcile.json
 
 设计要点（对齐 AB-调研与设计.md §5.5 / §5.6 / §3.6）：
-    1. 不改 0.2.0 桥：本脚本只在外层用 request.json + dslSha256 关联补追溯维度
+    1. 不改 当前桥：本脚本只在外层用 request.json + dslSha256 关联补追溯维度
        batchId / templateVersion / strategyId / promptSha256 / contractVersion / modelId 等。
     2. 同题对照控变量：同一份封存 programs/ 原样复制、同一 slot/ticks/species 口径、
        fresh paused seed42（Evaluator/Program.cs:32 GameSession(..., 42)）。
@@ -44,13 +44,14 @@ import csv
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 HERE = Path(__file__).resolve().parent   # scripts/
 ROOT = HERE.parent                       # 内层工作树 ant-mind-linux/（本脚本在 scripts/ 下，只上一层）
 BRIDGE = HERE / "model-eval-bridge.py"
@@ -59,7 +60,8 @@ DEFAULT_BASELINE = ROOT / "content/programs/hauler-reliable.ant"
 DEFAULT_OUT_ROOT = ROOT / ".tmp-eval-harness"
 SPECIES = ("scout", "hauler", "soldier", "chef", "builder")
 STANDARD_TICKS = (300, 600, 1200)
-HOST_SEED = 42
+HOST_SEED = None
+BRIDGE_VERSION = re.search(r"^# VERSION=(.+)$", BRIDGE.read_text(encoding="utf-8"), re.M).group(1)
 
 # reconcile 的业务字段全集（对齐 AB 报告 §5.5 的清单 + 桥 cells 的其余评分字段）
 COMPARE_FIELDS = (
@@ -171,7 +173,7 @@ def stop_host(proc):
 
 
 def run_bridge(pipe, programs, baseline, ticks, species, slot_stem, out_prefix, attempts=3):
-    """调 0.2.0 桥跑一次矩阵；不改桥一个字节。"""
+    """调 当前桥跑一次矩阵；不改桥一个字节。"""
     cmd = [sys.executable, str(BRIDGE), "--matrix",
            "--programs"] + [str(p) for p in programs] + [
            "--baseline", str(baseline),
@@ -220,10 +222,18 @@ def reconcile(left, right, meta=None):
                      "selfcheckPassedRight": (b.get("selfcheck") or {}).get("passed")})
     only_left = [dict(zip(("species", "ticks", "label", "dslSha256"), k)) for k in sorted(lkeys - rkeys, key=str)]
     only_right = [dict(zip(("species", "ticks", "label", "dslSha256"), k)) for k in sorted(rkeys - lkeys, key=str)]
-    diffs_total += len(only_left) + len(only_right)
+    duplicates = {"left": sum(len(v) - 1 for v in lmap.values()),
+                  "right": sum(len(v) - 1 for v in rmap.values())}
+    diffs_total += len(only_left) + len(only_right) + sum(duplicates.values())
     ld, rd = left.get("determinism") or {}, right.get("determinism") or {}
-    det_left_ok = (ld.get("failed", 1) == 0 and ld.get("passed", 0) == ld.get("total", -1))
-    det_right_ok = (rd.get("failed", 1) == 0 and rd.get("passed", 0) == rd.get("total", -1))
+    def deterministic(payload, det):
+        cells = payload.get("cells", [])
+        return (bool(cells) and det.get("enabled") is True
+                and det.get("failed") == 0 and det.get("passed") == len(cells)
+                and det.get("total") == len(cells)
+                and all((c.get("selfcheck") or {}).get("passed") is True for c in cells))
+    det_left_ok = deterministic(left, ld)
+    det_right_ok = deterministic(right, rd)
     passed = (diffs_total == 0 and det_left_ok and det_right_ok and not only_left and not only_right)
     return {
         "version": VERSION,
@@ -235,6 +245,7 @@ def reconcile(left, right, meta=None):
         "cellCountLeft": len(left.get("cells", [])),
         "cellCountRight": len(right.get("cells", [])),
         "matchedKeys": len(lkeys & rkeys),
+        "duplicateKeys": duplicates,
         "onlyLeft": only_left,
         "onlyRight": only_right,
         "determinism": {"left": ld, "right": rd, "leftOk": det_left_ok, "rightOk": det_right_ok},
@@ -259,14 +270,15 @@ def _freeze_copy_programs(programs_dir, dest, frozen=True):
         if frozen and target.exists():
             raise FileExistsError("拒绝覆盖已冻结 programs/：%s" % target)
         target.write_bytes(data)
-        rows.append({"file": p.name, "bytes": len(data), "dslSha256": sha256_bytes(data)})
+        rows.append({"file": p.name, "bytes": len(data), "fileSha256": sha256_bytes(data),
+                     "dslSha256": sha256_bytes(p.read_text(encoding="utf-8").encode("utf-8"))})
     return rows
 
 
 def _traceability(request, programs_rows, run_meta):
     trace = {k: request.get(k) for k in TRACE_KEYS}
     trace["harnessVersion"] = VERSION
-    trace["bridgeVersion"] = "0.2.0（未改动）"
+    trace["bridgeVersion"] = BRIDGE_VERSION
     trace["reviewRunId"] = run_meta.get("reviewRunId")
     trace["reviewOf"] = run_meta.get("reviewOf")
     trace["pipes"] = run_meta.get("pipes")
@@ -340,7 +352,7 @@ def cmd_run(args):
     if bad_s:
         print("--species 含不支持蚁种：%s" % bad_s, file=sys.stderr)
         return 2
-    if any(not 1 <= t <= 1200 for t in ticks):
+    if not ticks or not species or any(not 1 <= t <= 1200 for t in ticks):
         print("--ticks 必须 1..1200", file=sys.stderr)
         return 2
     narrowed = (args.ticks is not None) or (args.species is not None)
@@ -406,8 +418,14 @@ def cmd_run(args):
         "pipes": pipes,
     })
     trace = _link_dsl(trace, [p for _, p in results])
+    if not all(row["matched"] for row in trace["dslLink"]):
+        raise RuntimeError("Frozen program hashes did not match bridge cells")
+    trace.update(bridgeVersion=BRIDGE_VERSION, hostSeed=None,
+                 seedNote="Host default is 42; runtime seed not exposed or verified",
+                 ticks=ticks, speciesSet=species)
+    request = dict(request, dslSha256={r["file"]: r["dslSha256"] for r in programs_rows})
     verdict = {
-        "capabilityClaimAllowed": bool(rec and rec["passed"] and standard_full and not narrowed),
+        "capabilityClaimAllowed": False,  # Reproducibility alone is not statistical evidence of superiority.
         "statement": ("本 harness 下可复跑；单批次样例/区间未判，不能断言任何模型、策略、物种、ticks 的能力差异"
                       if (narrowed or not rec or not rec["passed"]) else
                       "reconcile 差异 0 且确定性自检全通过；仍需换会话复核六件套齐全后才允许落能力结论"),
@@ -419,7 +437,7 @@ def cmd_run(args):
         "hostSeed": HOST_SEED,
         "freshPaused": True,
         "bridgeUnmodified": True,
-        "bridgeVersion": "0.2.0",
+        "bridgeVersion": BRIDGE_VERSION,
     }
     summary = {
         "version": VERSION,
@@ -440,8 +458,8 @@ def cmd_run(args):
         "# 运行条件\n\n- runId: `%s`\n- batchId: `%s`\n- strategyId: `%s` / templateVersion: `%s`\n"
         "- promptSha256: `%s`\n- contractVersion: `%s`\n- pipes: `%s`\n"
         "- ticks: `%s`（标准档 %s）\n- species: `%s`（全 5 物种 %s）\n"
-        "- 宿主：fresh paused，seed=42，wire18 host `Evaluator.dll --serve`\n"
-        "- 同一份封存 programs/：`%s`\n- 桥：`model-eval-bridge.py` 0.2.0，**未改动**\n"
+        "- 宿主：fresh paused，默认种子42但未从运行时验证，wire18 host `Evaluator.dll --serve`\n"
+        "- 同一份封存 programs/：`%s`\n- 桥：`model-eval-bridge.py`，版本见 harness.json，**未改动**\n"
         "- 结论口径：%s\n" %
         (args.run_id, request["batchId"], request["strategyId"], request["templateVersion"],
          request["promptSha256"], request["contractVersion"], json.dumps(pipes, ensure_ascii=False),

@@ -1,4 +1,4 @@
-# VERSION=0.1.0
+# VERSION=0.1.1
 # -*- coding: utf-8 -*-
 """Ant Mind 模型响应分级清洗器（纯标准库）。
 
@@ -41,7 +41,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 THRESHOLD_VERBATIM = 0.85
 
 RE_THINK_CLOSED = re.compile(r"<(think|thinking|analysis)\b[^>]*>.*?</\1\s*>", re.S | re.I)
@@ -76,11 +76,10 @@ def _strip_think(text):
     out, n = RE_THINK_CLOSED.subn("", text)
     removed += len(text) - len(out)
     text = out
-    if n == 0:
-        out2, n2 = RE_THINK_OPEN.subn("", text)
-        if n2:
-            removed += len(text) - len(out2)
-            text = out2
+    out2, n2 = RE_THINK_OPEN.subn("", text)
+    if n2:
+        removed += len(text) - len(out2)
+        text = out2
     return text, removed, (n > 0 or RE_THINK_OPEN.search(out) is not None)
 
 
@@ -331,12 +330,13 @@ def main():
         clean_dir = batch / "clean"
         programs_dir = batch / "programs"
         manifest_path = batch / "clean_manifest.json"
-        if args.frozen and manifest_path.exists():
+        if manifest_path.exists():
             print("拒绝覆盖已冻结批次：%s" % manifest_path, file=sys.stderr)
             return 2
+        args.frozen = True
         rows = []
         for raw_path in sorted(raw_dir.glob("*.txt")):
-            result = clean_response(raw_path.read_text(encoding="utf-8"), fewshots)
+            result = clean_response(raw_path.read_bytes().decode("utf-8"), fewshots)
             (clean_dir / (raw_path.stem + ".json")).parent.mkdir(parents=True, exist_ok=True)
             (programs_dir / (raw_path.stem + ".ant")).parent.mkdir(parents=True, exist_ok=True)
             _write_frozen(clean_dir / (raw_path.stem + ".json"),
@@ -359,7 +359,7 @@ def main():
     if args.stdin:
         raw = sys.stdin.read()
     elif args.input:
-        raw = Path(args.input).read_text(encoding="utf-8")
+        raw = Path(args.input).read_bytes().decode("utf-8")
     else:
         ap.error("给 --input / --stdin / --batch-dir / --selftest 之一")
         return 1

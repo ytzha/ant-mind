@@ -156,7 +156,7 @@ def main():
         ticks = [int(t.strip()) for t in args.ticks.split(",") if t.strip()]
     except ValueError:
         ap.error("--ticks 必须是逗号分隔整数")
-    if any(not 1 <= t <= 1200 for t in ticks):
+    if not ticks or not species_set or any(not 1 <= t <= 1200 for t in ticks):
         ap.error("--ticks 必须 1..1200（上游 evaluate_save 硬限制）")
 
     template = HERE / "strategies" / STRATEGY_FILES[args.strategy]
@@ -186,7 +186,7 @@ def main():
         return 2
 
     out_dir.mkdir(parents=True)
-    (out_dir / "prompt.rendered.md").write_text(rendered, encoding="utf-8")
+    (out_dir / "prompt.rendered.md").write_bytes(rendered.encode("utf-8"))
     (out_dir / "CONDITION.md").write_text(
         "# 出卷条件（冻结）\n\n"
         "- batchId: `%s`\n- strategyId: `%s`\n- templateVersion: `%s`\n"
